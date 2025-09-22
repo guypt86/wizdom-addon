@@ -1211,6 +1211,13 @@ addon.defineSubtitlesHandler(async (args) => {
 // ---------- Express Server ----------
 const app = express();
 
+// Log ALL requests for debugging
+app.use((req, res, next) => {
+  console.log(`\n📥 [${new Date().toISOString()}] ${req.method} ${req.url}`);
+  console.log(`📥 User-Agent: ${req.headers['user-agent'] || 'N/A'}`);
+  next();
+});
+
 // Health check endpoint for Render
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
@@ -1223,17 +1230,150 @@ app.get('/manifest.json', (req, res) => {
   res.json(addon.getInterface().manifest);
 });
 
-app.get('/subtitles/:type/:id', async (req, res) => {
+// Handler function for Stremio subtitles
+const handleStremioSubtitles = async (req, res) => {
   try {
-    const result = await addon.getInterface().get('subtitles', req.params);
+    // Handle both named params (:type/:id) and regex params (req.params[0], req.params[1])
+    const type = req.params.type || req.params[0];
+    let id = req.params.id || req.params[1];
+
+    // Clean ID from Stremio parameters like: tt3402138/videoHash=...&videoSize=...
+    if (id && id.includes('/')) {
+      id = id.split('/')[0];
+    }
+
+    console.log(`\n🎬 [STREMIO] ===== REQUEST START =====`);
+    console.log(`[Stremio] Request for ${type}/${id}`);
+    console.log(`[Stremio] Original path:`, req.path);
+    console.log(`[Stremio] Cleaned ID:`, id);
+    console.log(`[Stremio] Headers:`, JSON.stringify(req.headers, null, 2));
+    console.log(`[Stremio] Query:`, req.query);
+
+    // Use the same logic as Vidi route
+    const isMovie = type === 'movie';
+    let imdb = id;
+    let season, episode;
+
+    if (!isMovie) {
+      const m = id.match(/(tt\d+):(\d+):(\d+)/);
+      if (m) {
+        imdb = m[1];
+        season = Number(m[2]);
+        episode = Number(m[3]);
+      }
+    }
+
+    const { title, year } = await getTitleFromCinemeta(
+      isMovie ? 'movie' : 'series',
+      imdb
+    );
+
+    const queries = [];
+    if (isMovie) {
+      queries.push(`${title} ${year || ''}`.trim());
+      queries.push(`${title}`);
+      queries.push(`${title} 1080p`);
+    } else {
+      const tag = seTag(season, episode);
+      queries.push(`${title} ${tag}`);
+      queries.push(`${title} ${tag} 1080p`);
+      queries.push(`${title} ${tag} WEB`);
+      queries.push(`${title} ${tag} WEB-DL`);
+      queries.push(`${title} ${tag} HDTV`);
+      queries.push(`${title} ${tag} BluRay`);
+      queries.push(`${title} ${tag.slice(0, 3)} ${tag.slice(3)}`);
+      queries.push(`${title} ${season} ${episode}`);
+      queries.push(`${title}`);
+    }
+
+    const posts = await findWizdomPageCandidates(queries, imdb);
+    if (!posts.length) {
+      return res.json({ subtitles: [] });
+    }
+
+    let chosen = pickBestPost(posts, { title, season, episode });
+    chosen = normalizeUrl(chosen);
+    if (!chosen) return res.json({ subtitles: [] });
+
+    let links = [];
+    if (isSubtitleFileUrl(chosen)) {
+      const ok = await validateDirectSubtitleUrl(
+        chosen,
+        title,
+        season,
+        episode
+      );
+      if (ok) links = [{ href: chosen, label: 'Direct' }];
+      else links = [];
+    } else {
+      links = await extractSubtitleLinksFromPage(chosen);
+      const filtered = [];
+      for (const l of links) {
+        if (!isSubtitleFileUrl(l.href)) continue;
+        const ok = await validateDirectSubtitleUrl(
+          l.href,
+          title,
+          season,
+          episode
+        );
+        if (ok) filtered.push(l);
+      }
+      links = filtered;
+    }
+
+    if (!links.length) {
+      return res.json({ subtitles: [] });
+    }
+
+    const useWizdomEpisodeProxy = !isMovie && /\/(movie|series)\//.test(chosen);
+    const subs = links.map((lnk, i) => {
+      let subtitleName = lnk.label || 'Subtitle';
+      if (lnk.href.includes('/api/files/sub/')) {
+        const subId = lnk.href.match(/\/sub\/(\d+)/)?.[1];
+        if (subId) {
+          subtitleName = `Hebrew Subtitle ${subId}`;
+        }
+      }
+
+      const se = !isMovie ? seTag(season, episode) : undefined;
+      let url;
+      if (useWizdomEpisodeProxy) {
+        const q = `post=${encodeURIComponent(chosen)}${
+          se ? `&se=${encodeURIComponent(se)}` : ''
+        }${title ? `&title=${encodeURIComponent(title)}` : ''}${
+          lnk.href ? `&fallback=${encodeURIComponent(lnk.href)}` : ''
+        }`;
+        url = `${PROXY_ORIGIN}/proxy/vtt-wizdom?${q}`;
+      } else {
+        const query = `src=${encodeURIComponent(lnk.href)}${
+          se ? `&se=${encodeURIComponent(se)}` : ''
+        }${title ? `&title=${encodeURIComponent(title)}` : ''}`;
+        url = `${PROXY_ORIGIN}/proxy/vtt?${query}`;
+      }
+      return {
+        id: `wizdom-${i}`,
+        lang: 'he',
+        name: `Wizdom • ${subtitleName}`,
+        url,
+        mimeType: 'text/vtt',
+      };
+    });
+
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Content-Type', 'application/json');
-    res.json(result);
+    console.log(`[Stremio] Returning ${subs.length} subtitles`);
+    console.log(`🎬 [STREMIO] ===== REQUEST END =====\n`);
+    res.json({ subtitles: subs });
   } catch (e) {
-    console.error('[Stremio] error:', e.message);
+    console.error('🎬 [STREMIO] ERROR:', e.message);
+    console.log(`🎬 [STREMIO] ===== REQUEST END (ERROR) =====\n`);
     res.status(500).json({ error: 'Failed to fetch subtitles' });
   }
-});
+};
+
+// Stremio endpoint - handle both formats: /subtitles/:type/:id and /subtitles/:type/:id/something.json
+app.get('/subtitles/:type/:id', handleStremioSubtitles);
+app.get(/^\/subtitles\/([^\/]+)\/([^\/]+)\/.*/, handleStremioSubtitles);
 
 // Vidi-compatible endpoints
 app.get('/vidi/manifest.json', (req, res) => {
