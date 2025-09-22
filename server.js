@@ -845,11 +845,80 @@ async function extractSubtitleLinksWithPuppeteer(pageUrl) {
       });
 
       console.log(`[Extract] Fallback found ${links.length} subtitle links`);
+
+      // If no links found with fetch, try direct API search as last resort
+      if (links.length === 0) {
+        console.log(`[Extract] No links found, trying direct API search...`);
+        return await tryDirectApiSearch(pageUrl);
+      }
+
       return links;
     } catch (fallbackError) {
       console.error(`[Extract] Fallback also failed: ${fallbackError.message}`);
+      // Last resort: try API search
+      try {
+        return await tryDirectApiSearch(pageUrl);
+      } catch (apiError) {
+        console.error(`[Extract] API search also failed: ${apiError.message}`);
+        return [];
+      }
+    }
+  }
+}
+
+// Try direct API search when page scraping fails
+async function tryDirectApiSearch(pageUrl) {
+  console.log(`[API] Attempting direct search for: ${pageUrl}`);
+
+  // Extract IMDB ID from URL
+  const imdbMatch = pageUrl.match(/\/movie\/(tt\d+)/);
+  if (!imdbMatch) {
+    console.log(`[API] No IMDB ID found in URL`);
+    return [];
+  }
+
+  const imdbId = imdbMatch[1];
+  console.log(`[API] Searching for IMDB ID: ${imdbId}`);
+
+  try {
+    // Try to search for the movie/series on Wizdom's search
+    const searchUrl = `https://wizdom.xyz/api/search?q=${imdbId}`;
+    const response = await fetch(searchUrl);
+
+    if (!response.ok) {
+      console.log(`[API] Search failed: ${response.status}`);
       return [];
     }
+
+    const data = await response.json();
+    console.log(`[API] Search response:`, JSON.stringify(data, null, 2));
+
+    const links = [];
+
+    // Process search results to extract subtitle links
+    if (data && Array.isArray(data.results)) {
+      for (const result of data.results) {
+        if (result.subtitles && Array.isArray(result.subtitles)) {
+          for (const sub of result.subtitles) {
+            if (sub.download_link) {
+              const fullUrl = sub.download_link.startsWith('http')
+                ? sub.download_link
+                : `https://wizdom.xyz${sub.download_link}`;
+              links.push({
+                href: fullUrl,
+                label: sub.release_name || 'Download',
+              });
+            }
+          }
+        }
+      }
+    }
+
+    console.log(`[API] Found ${links.length} subtitle links via API`);
+    return links;
+  } catch (error) {
+    console.error(`[API] Direct search failed: ${error.message}`);
+    return [];
   }
 }
 
