@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: wizdom-addon
+    runtime: node
+    buildCommand: |
+      apt-get update && apt-get install -y chromium-browser
+      npm install
+    startCommand: node server.js
+    envVars:
+      - key: PUPPETEER_EXECUTABLE_PATH
+        value: /usr/bin/chromium-browser
+      - key: NODE_ENV
+        value: production
