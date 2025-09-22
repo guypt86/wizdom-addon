@@ -1436,7 +1436,7 @@ addon.defineSubtitlesHandler(async (args) => {
       const query = `src=${encodeURIComponent(lnk.href)}${
         se ? `&se=${encodeURIComponent(se)}` : ''
       }${title ? `&title=${encodeURIComponent(title)}` : ''}`;
-      url = directMode ? lnk.href : `${PROXY_ORIGIN}/proxy/vtt?${query}`;
+      url = directMode ? lnk.href : `${PROXY_ORIGIN}/proxy/vtt.vtt?${query}`;
     }
     return {
       id: `wizdom-${i}`,
@@ -1593,7 +1593,7 @@ const handleStremioSubtitles = async (req, res) => {
         const query = `src=${encodeURIComponent(lnk.href)}${
           se ? `&se=${encodeURIComponent(se)}` : ''
         }${title ? `&title=${encodeURIComponent(title)}` : ''}`;
-        url = `${PROXY_ORIGIN}/proxy/vtt?${query}`;
+        url = `${PROXY_ORIGIN}/proxy/vtt.vtt?${query}`;
       }
       return {
         id: `wizdom-${i}`,
@@ -1742,7 +1742,7 @@ app.get('/vidi/subtitles/:type/:id', async (req, res) => {
         const query = `src=${encodeURIComponent(lnk.href)}${
           se ? `&se=${encodeURIComponent(se)}` : ''
         }${title ? `&title=${encodeURIComponent(title)}` : ''}`;
-        url = `${PROXY_ORIGIN}/proxy/vtt?${query}`;
+        url = `${PROXY_ORIGIN}/proxy/vtt.vtt?${query}`;
       }
       return {
         id: `wizdom-${i}`,
@@ -2138,73 +2138,12 @@ app.options('/proxy/vtt', (req, res) => {
   res.status(200).end();
 });
 
-// תמיכה ב-HEAD
-app.head('/proxy/vtt', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
-  res.status(200).end();
-});
-
-// אליאס עם סיומת .vtt (יש לקוחות שזה מפשט להם את הזיהוי)
-app.get('/proxy/vtt.vtt', async (req, res) => {
-  try {
-    const src = req.query.src;
-    console.log(`[Proxy] request (.vtt): ${src}`);
-    if (!src) return res.status(400).send('missing src');
-    const se = (req.query.se || '').toString();
-    const title = (req.query.title || '').toString();
-    let vtt = await fetchAsVttBuffer(src, { seTag: se, title });
-
-    // הבטחה שהקובץ מתחיל ב-WEBVTT
-    const head = vtt.slice(0, 16).toString('utf8').toUpperCase();
-    if (!head.includes('WEBVTT')) {
-      vtt = Buffer.concat([Buffer.from('WEBVTT\n\n', 'utf8'), vtt]);
-    }
-
-    // כותרות חשובות
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
-    res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
-    res.setHeader('Content-Disposition', 'inline; filename="subtitle.vtt"');
-    res.setHeader('Cache-Control', 'public, max-age=300');
-    res.setHeader('Accept-Ranges', 'bytes');
-
-    res.send(vtt);
-  } catch (e) {
-    console.error('[Proxy] error (.vtt):', e.message);
-    res.status(500).send('failed to fetch/convert subtitles');
-  }
-});
-app.options('/proxy/vtt.vtt', (req, res) => {
+// OPTIONS handler for CORS
+app.options('/proxy/vtt', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
   res.status(200).end();
-});
-
-app.head('/proxy/vtt.vtt', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
-  res.status(200).end();
-});
-
-// HEAD handler for clients probing metadata
-app.head('/proxy/vtt', async (req, res) => {
-  try {
-    const src = req.query.src;
-    if (!src) return res.status(400).end();
-    let vtt = await fetchAsVttBuffer(src);
-    vtt = normalizeVttBuffer(vtt);
-    const subIdMatch = /\/sub\/(\d+)/.exec(String(src));
-    const fileName = `wizdom-${subIdMatch ? subIdMatch[1] : 'subtitle'}.vtt`;
-    res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
-    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
-    res.setHeader('Content-Length', String(vtt.length));
-    return res.status(200).end();
-  } catch (e) {
-    return res.status(500).end();
-  }
 });
 
 // Alias with .vtt extension to please strict clients
@@ -2259,17 +2198,37 @@ app.get('/proxy/vtt.vtt', async (req, res) => {
   }
 });
 
+app.options('/proxy/vtt.vtt', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+  res.status(200).end();
+});
+
 app.head('/proxy/vtt.vtt', async (req, res) => {
   try {
     const src = req.query.src;
     if (!src) return res.status(400).end();
-    let vtt = await fetchAsVttBuffer(src);
-    vtt = normalizeVttBuffer(vtt);
+    const se = (req.query.se || '').toString();
+    const title = (req.query.title || '').toString();
+    let vtt = await fetchAsVttBuffer(src, { seTag: se, title });
+
+    // הבטחה שהקובץ מתחיל ב-WEBVTT
+    const head = vtt.slice(0, 16).toString('utf8').toUpperCase();
+    if (!head.includes('WEBVTT')) {
+      vtt = Buffer.concat([Buffer.from('WEBVTT\n\n', 'utf8'), vtt]);
+    }
+
     const subIdMatch = /\/sub\/(\d+)/.exec(String(src));
     const fileName = `wizdom-${subIdMatch ? subIdMatch[1] : 'subtitle'}.vtt`;
     res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
     res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
     res.setHeader('Content-Length', String(vtt.length));
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+    res.setHeader('Cache-Control', 'public, max-age=300');
     return res.status(200).end();
   } catch (e) {
     return res.status(500).end();
