@@ -21,7 +21,7 @@ const PROXY_PORT = process.env.PROXY_PORT || 7001;
 const HOST = process.env.HOST || '0.0.0.0';
 const PROXY_ORIGIN = process.env.RENDER_EXTERNAL_URL
   ? `${process.env.RENDER_EXTERNAL_URL}`
-  : `http://127.0.0.1:${PROXY_PORT}`;
+  : `http://127.0.0.1:${ADDON_PORT}`;
 
 // ---------- Search bases & overrides ----------
 const SEARCH_BASES = [
@@ -1357,7 +1357,7 @@ app.get('/vidi/subtitles/:type/:id', async (req, res) => {
         const query = `src=${encodeURIComponent(lnk.href)}${
           se ? `&se=${encodeURIComponent(se)}` : ''
         }${title ? `&title=${encodeURIComponent(title)}` : ''}`;
-        url = `http://127.0.0.1:7001/proxy/vtt?${query}`;
+        url = `${PROXY_ORIGIN}/proxy/vtt?${query}`;
       }
       return {
         id: `wizdom-${i}`,
