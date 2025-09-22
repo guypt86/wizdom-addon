@@ -15,6 +15,26 @@ const iconv = require('iconv-lite');
 const chardet = require('jschardet');
 const puppeteer = require('puppeteer');
 
+// Test Puppeteer availability on startup
+(async () => {
+  try {
+    const testPath =
+      process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath();
+    console.log(`[Puppeteer] Testing executable path: ${testPath}`);
+
+    const browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      executablePath: testPath,
+    });
+    await browser.close();
+    console.log(`[Puppeteer] ✅ Available and working`);
+  } catch (e) {
+    console.error(`[Puppeteer] ❌ Not available: ${e.message}`);
+    console.log(`[Puppeteer] Will use fallback without browser automation`);
+  }
+})();
+
 // ---------- Ports / Origins ----------
 const ADDON_PORT = process.env.PORT || 7010;
 const PROXY_PORT = process.env.PROXY_PORT || 7001;
@@ -295,7 +315,8 @@ async function findWizdomPageCandidates(queries, imdbId) {
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
       ],
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      executablePath:
+        process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
     });
     const page = await browser.newPage();
 
@@ -585,7 +606,8 @@ async function extractSubtitleLinksWithPuppeteer(pageUrl) {
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
       ],
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      executablePath:
+        process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
     });
     const page = await browser.newPage();
 
@@ -799,8 +821,35 @@ async function extractSubtitleLinksWithPuppeteer(pageUrl) {
 
     return uniqueLinks;
   } catch (e) {
-    console.log(`[Extract] Puppeteer error: ${e.message}`);
-    return [];
+    console.error(`[Extract] Puppeteer error: ${e.message}`);
+    console.log(`[Extract] Falling back to regular fetch for: ${pageUrl}`);
+
+    // Fallback: try regular fetch without Puppeteer
+    try {
+      const response = await fetch(pageUrl);
+      if (!response.ok) return [];
+
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      const links = [];
+
+      $('a[href*="/api/files/sub/"]').each((i, el) => {
+        const href = $(el).attr('href');
+        const text = $(el).text().trim();
+        if (href && href.includes('/api/files/sub/')) {
+          const fullUrl = href.startsWith('http')
+            ? href
+            : `https://wizdom.xyz${href}`;
+          links.push({ href: fullUrl, label: text || 'Download' });
+        }
+      });
+
+      console.log(`[Extract] Fallback found ${links.length} subtitle links`);
+      return links;
+    } catch (fallbackError) {
+      console.error(`[Extract] Fallback also failed: ${fallbackError.message}`);
+      return [];
+    }
   }
 }
 
@@ -1599,7 +1648,8 @@ app.get('/proxy/vtt-wizdom', async (req, res) => {
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
       ],
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+      executablePath:
+        process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
     });
     const page = await browser.newPage();
     await page.goto(postUrl, { waitUntil: 'networkidle2', timeout: 20000 });
