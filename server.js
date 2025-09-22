@@ -1802,10 +1802,62 @@ app.get('/proxy/vtt', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.setHeader('Accept-Ranges', 'bytes');
 
+    // Handle Range requests
+    const total = vtt.length;
+    const range = req.headers.range;
+    if (range) {
+      const m = /bytes=(\d+)-(\d+)?/.exec(range);
+      if (!m) return res.status(416).end();
+      const start = parseInt(m[1], 10);
+      const end = Math.min(total - 1, m[2] ? parseInt(m[2], 10) : total - 1);
+      if (start >= total || end < start) return res.status(416).end();
+      const chunk = vtt.subarray(start, end + 1);
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+      res.setHeader('Content-Length', String(chunk.length));
+      console.log(
+        `[Proxy] served VTT range ${start}-${end} (${chunk.length} bytes)`
+      );
+      return res.end(chunk);
+    }
+
+    res.setHeader('Content-Length', String(total));
+    console.log(`[Proxy] served VTT full (${total} bytes)`);
     res.send(vtt);
   } catch (e) {
     console.error('[Proxy] error:', e.message);
     return res.status(500).send('failed to fetch/convert subtitles');
+  }
+});
+
+// HEAD handler for /proxy/vtt
+app.head('/proxy/vtt', async (req, res) => {
+  try {
+    const src = req.query.src;
+    if (!src) return res.status(400).end();
+    const se = (req.query.se || '').toString();
+    const title = (req.query.title || '').toString();
+    let vtt = await fetchAsVttBuffer(src, { seTag: se, title });
+
+    // הבטחה שהקובץ מתחיל ב-WEBVTT
+    const head = vtt.slice(0, 16).toString('utf8').toUpperCase();
+    if (!head.includes('WEBVTT')) {
+      vtt = Buffer.concat([Buffer.from('WEBVTT\n\n', 'utf8'), vtt]);
+    }
+
+    const subIdMatch = /\/sub\/(\d+)/.exec(String(src));
+    const fileName = `wizdom-${subIdMatch ? subIdMatch[1] : 'subtitle'}.vtt`;
+    res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
+    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+    res.setHeader('Content-Length', String(vtt.length));
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    return res.status(200).end();
+  } catch (e) {
+    return res.status(500).end();
   }
 });
 
@@ -2161,8 +2213,16 @@ app.get('/proxy/vtt.vtt', async (req, res) => {
     const src = req.query.src;
     console.log(`[Proxy] request (.vtt): ${src}`);
     if (!src) return res.status(400).send('missing src');
-    let vtt = await fetchAsVttBuffer(src);
-    vtt = normalizeVttBuffer(vtt);
+    const se = (req.query.se || '').toString();
+    const title = (req.query.title || '').toString();
+    let vtt = await fetchAsVttBuffer(src, { seTag: se, title });
+
+    // הבטחה שהקובץ מתחיל ב-WEBVTT
+    const head = vtt.slice(0, 16).toString('utf8').toUpperCase();
+    if (!head.includes('WEBVTT')) {
+      vtt = Buffer.concat([Buffer.from('WEBVTT\n\n', 'utf8'), vtt]);
+    }
+
     const subIdMatch = /\/sub\/(\d+)/.exec(String(src));
     const fileName = `wizdom-${subIdMatch ? subIdMatch[1] : 'subtitle'}.vtt`;
     const total = vtt.length;
@@ -2170,6 +2230,10 @@ app.get('/proxy/vtt.vtt', async (req, res) => {
     res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range');
+    res.setHeader('Cache-Control', 'public, max-age=300');
+
     const range = req.headers.range;
     if (range) {
       const m = /bytes=(\d+)-(\d+)?/.exec(range);
