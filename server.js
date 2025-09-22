@@ -1211,6 +1211,11 @@ addon.defineSubtitlesHandler(async (args) => {
 // ---------- Express Server ----------
 const app = express();
 
+// Health check endpoint for Render
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+});
+
 // Stremio addon endpoints
 app.get('/manifest.json', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
