@@ -881,45 +881,138 @@ async function tryDirectApiSearch(pageUrl) {
   console.log(`[API] Searching for IMDB ID: ${imdbId}`);
 
   try {
-    // Try to search for the movie/series on Wizdom's search
-    const searchUrl = `https://wizdom.xyz/api/search?q=${imdbId}`;
-    const response = await fetch(searchUrl);
+    // Try multiple API approaches
+    const endpoints = [
+      `https://wizdom.xyz/api/search?q=${imdbId}`,
+      `https://wizdom.xyz/search?q=${imdbId}`,
+      `https://wizdom.xyz/api/movie/${imdbId}`,
+      `https://wizdom.xyz/movie/${imdbId}/subtitles`,
+    ];
 
-    if (!response.ok) {
-      console.log(`[API] Search failed: ${response.status}`);
-      return [];
-    }
+    for (const searchUrl of endpoints) {
+      console.log(`[API] Trying endpoint: ${searchUrl}`);
 
-    const data = await response.json();
-    console.log(`[API] Search response:`, JSON.stringify(data, null, 2));
+      try {
+        const response = await fetch(searchUrl, {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            Accept: 'application/json, text/html, */*',
+            Referer: 'https://wizdom.xyz/',
+          },
+        });
 
-    const links = [];
+        console.log(`[API] Response status: ${response.status}`);
 
-    // Process search results to extract subtitle links
-    if (data && Array.isArray(data.results)) {
-      for (const result of data.results) {
-        if (result.subtitles && Array.isArray(result.subtitles)) {
-          for (const sub of result.subtitles) {
-            if (sub.download_link) {
-              const fullUrl = sub.download_link.startsWith('http')
-                ? sub.download_link
-                : `https://wizdom.xyz${sub.download_link}`;
-              links.push({
-                href: fullUrl,
-                label: sub.release_name || 'Download',
-              });
+        if (response.ok) {
+          const contentType = response.headers.get('content-type');
+          console.log(`[API] Content-Type: ${contentType}`);
+
+          if (contentType && contentType.includes('application/json')) {
+            const data = await response.json();
+            console.log(`[API] JSON response:`, JSON.stringify(data, null, 2));
+
+            // Process JSON response
+            const links = extractLinksFromApiResponse(data);
+            if (links.length > 0) {
+              console.log(`[API] Found ${links.length} links from JSON`);
+              return links;
+            }
+          } else {
+            // Try to parse as HTML
+            const html = await response.text();
+            console.log(`[API] HTML response length: ${html.length}`);
+
+            const links = extractLinksFromHtml(html);
+            if (links.length > 0) {
+              console.log(`[API] Found ${links.length} links from HTML`);
+              return links;
             }
           }
         }
+      } catch (endpointError) {
+        console.log(
+          `[API] Endpoint ${searchUrl} failed: ${endpointError.message}`
+        );
       }
     }
 
-    console.log(`[API] Found ${links.length} subtitle links via API`);
-    return links;
+    console.log(`[API] All endpoints failed`);
+    return [];
   } catch (error) {
     console.error(`[API] Direct search failed: ${error.message}`);
     return [];
   }
+}
+
+// Extract links from API JSON response
+function extractLinksFromApiResponse(data) {
+  const links = [];
+
+  // Try different JSON structures
+  if (data && Array.isArray(data.results)) {
+    for (const result of data.results) {
+      if (result.subtitles && Array.isArray(result.subtitles)) {
+        for (const sub of result.subtitles) {
+          if (sub.download_link) {
+            const fullUrl = sub.download_link.startsWith('http')
+              ? sub.download_link
+              : `https://wizdom.xyz${sub.download_link}`;
+            links.push({
+              href: fullUrl,
+              label: sub.release_name || 'Download',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Try direct subtitle array
+  if (data && Array.isArray(data.subtitles)) {
+    for (const sub of data.subtitles) {
+      if (sub.download_url || sub.url || sub.link) {
+        const url = sub.download_url || sub.url || sub.link;
+        const fullUrl = url.startsWith('http')
+          ? url
+          : `https://wizdom.xyz${url}`;
+        links.push({
+          href: fullUrl,
+          label: sub.name || sub.title || 'Download',
+        });
+      }
+    }
+  }
+
+  return links;
+}
+
+// Extract links from HTML response
+function extractLinksFromHtml(html) {
+  const cheerio = require('cheerio');
+  const $ = cheerio.load(html);
+  const links = [];
+
+  // Look for subtitle download links
+  $('a[href*="/api/files/sub/"], a[href*=".srt"], a[href*=".zip"]').each(
+    (i, el) => {
+      const href = $(el).attr('href');
+      const text = $(el).text().trim();
+      if (
+        href &&
+        (href.includes('/api/files/sub/') ||
+          href.includes('.srt') ||
+          href.includes('.zip'))
+      ) {
+        const fullUrl = href.startsWith('http')
+          ? href
+          : `https://wizdom.xyz${href}`;
+        links.push({ href: fullUrl, label: text || 'Download' });
+      }
+    }
+  );
+
+  return links;
 }
 
 // בדיקת תוכן כתוביות לאימות פרק ועונה
