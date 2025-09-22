@@ -17,14 +17,14 @@ const puppeteer = require('puppeteer-core');
 const chromium = require('@sparticuz/chromium');
 
 // Get the correct executable path for different environments
-function getExecutablePath() {
+async function getExecutablePath() {
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
     return process.env.PUPPETEER_EXECUTABLE_PATH;
   }
 
   // For serverless environments (Render, Vercel, etc.)
   if (process.env.NODE_ENV === 'production') {
-    return chromium.executablePath;
+    return await chromium.executablePath();
   }
 
   // For local development
@@ -32,7 +32,7 @@ function getExecutablePath() {
     const puppeteerFull = require('puppeteer');
     return puppeteerFull.executablePath();
   } catch {
-    return chromium.executablePath;
+    return await chromium.executablePath();
   }
 }
 
