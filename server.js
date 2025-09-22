@@ -867,7 +867,7 @@ async function extractSubtitleLinksWithPuppeteer(pageUrl) {
 }
 
 // Try direct API search when page scraping fails
-async function tryDirectApiSearch(pageUrl) {
+async function tryDirectApiSearch(pageUrl, title = null) {
   console.log(`[API] Attempting direct search for: ${pageUrl}`);
 
   // Extract IMDB ID from URL
@@ -878,7 +878,7 @@ async function tryDirectApiSearch(pageUrl) {
   }
 
   const imdbId = imdbMatch[1];
-  console.log(`[API] Searching for IMDB ID: ${imdbId}`);
+  console.log(`[API] Searching for IMDB ID: ${imdbId}, title: ${title}`);
 
   try {
     // Try multiple API approaches
@@ -922,10 +922,20 @@ async function tryDirectApiSearch(pageUrl) {
             // Try to parse as HTML
             const html = await response.text();
             console.log(`[API] HTML response length: ${html.length}`);
+            console.log(
+              `[API] HTML preview (first 500 chars):`,
+              html.substring(0, 500)
+            );
 
             const links = extractLinksFromHtml(html);
+            console.log(
+              `[API] extractLinksFromHtml found ${links.length} links`
+            );
             if (links.length > 0) {
-              console.log(`[API] Found ${links.length} links from HTML`);
+              console.log(
+                `[API] Found ${links.length} links from HTML:`,
+                links
+              );
               return links;
             }
           }
