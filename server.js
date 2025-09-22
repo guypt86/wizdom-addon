@@ -13,18 +13,44 @@ const { Readable } = require('stream');
 const { URL } = require('url');
 const iconv = require('iconv-lite');
 const chardet = require('jschardet');
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
+
+// Get the correct executable path for different environments
+function getExecutablePath() {
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+
+  // For serverless environments (Render, Vercel, etc.)
+  if (process.env.NODE_ENV === 'production') {
+    return chromium.executablePath;
+  }
+
+  // For local development
+  try {
+    const puppeteerFull = require('puppeteer');
+    return puppeteerFull.executablePath();
+  } catch {
+    return chromium.executablePath;
+  }
+}
 
 // Test Puppeteer availability on startup
 (async () => {
   try {
-    const testPath =
-      process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath();
+    const testPath = await getExecutablePath();
     console.log(`[Puppeteer] Testing executable path: ${testPath}`);
 
     const browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+      ],
       executablePath: testPath,
     });
     await browser.close();
@@ -315,8 +341,7 @@ async function findWizdomPageCandidates(queries, imdbId) {
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
       ],
-      executablePath:
-        process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+      executablePath: await getExecutablePath(),
     });
     const page = await browser.newPage();
 
@@ -606,8 +631,7 @@ async function extractSubtitleLinksWithPuppeteer(pageUrl) {
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
       ],
-      executablePath:
-        process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+      executablePath: await getExecutablePath(),
     });
     const page = await browser.newPage();
 
@@ -1820,8 +1844,7 @@ app.get('/proxy/vtt-wizdom', async (req, res) => {
         '--disable-web-security',
         '--disable-features=VizDisplayCompositor',
       ],
-      executablePath:
-        process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+      executablePath: await getExecutablePath(),
     });
     const page = await browser.newPage();
     await page.goto(postUrl, { waitUntil: 'networkidle2', timeout: 20000 });
